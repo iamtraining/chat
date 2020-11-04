@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -11,13 +12,24 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/iamtraining/chat/auth"
 	"github.com/iamtraining/chat/chat"
 	"github.com/iamtraining/chat/views"
+	"github.com/joho/godotenv"
 )
+
+func init() {
+	if err := godotenv.Load(); err != nil {
+		panic("couldnt load .env")
+	}
+}
 
 func main() {
 	addr := flag.String("addr", ":3000", "server address")
 	flag.Parse()
+
+	fmt.Println(auth.Conf.ClientID)
+	fmt.Println(auth.Conf.ClientSecret)
 
 	handler := mux.NewRouter()
 
@@ -27,8 +39,15 @@ func main() {
 	}
 
 	chat := chat.NewChatServer(context.Background(), 100)
+
+	// chat
 	handler.Handle("/chat/{room}", &views.Template{Filename: "chat.gohtml"})
 	handler.HandleFunc("/join/{room}", chat.Join)
+
+	// auth
+	handler.Handle("/login", &views.Template{Filename: "login.gohtml"})
+	handler.HandleFunc("/auth/google/login", auth.LoginHandler)
+	handler.HandleFunc("/auth/google/callback", auth.CallbackHandler)
 
 	go func() {
 		if err := srv.ListenAndServe(); err != nil {

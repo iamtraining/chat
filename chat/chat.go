@@ -23,10 +23,10 @@ var (
 )
 
 type ChatServer struct {
-	rooms   map[string]*Room
-	roomsMu sync.RWMutex
-	wg      sync.WaitGroup
-	//bufferSize uint
+	rooms      map[string]*Room
+	roomsMu    sync.RWMutex
+	wg         sync.WaitGroup
+	bufferSize uint
 	rootCtx    context.Context
 	rootCancel context.CancelFunc
 	upgrader   websocket.Upgrader
@@ -64,8 +64,8 @@ func NewChatServer(ctx context.Context, bufferSize uint) ChatServer {
 	ctx, cancel := context.WithCancel(ctx)
 
 	return ChatServer{
-		rooms: make(map[string]*Room),
-		//bufferSize: bufferSize,
+		rooms:      make(map[string]*Room),
+		bufferSize: bufferSize,
 		rootCtx:    ctx,
 		rootCancel: cancel,
 		upgrader: websocket.Upgrader{
@@ -121,7 +121,7 @@ func (c *Client) write() {
 
 }
 
-func NewRoom(ctx context.Context, srvwg *sync.WaitGroup, name string /*, bufferSize uint*/) *Room {
+func NewRoom(ctx context.Context, srvwg *sync.WaitGroup, name string, bufferSize uint) *Room {
 	ctx, cancel := context.WithCancel(ctx)
 
 	wg := &sync.WaitGroup{}
@@ -130,7 +130,7 @@ func NewRoom(ctx context.Context, srvwg *sync.WaitGroup, name string /*, bufferS
 	return &Room{
 		name: name,
 		//send:    make(chan *Message, bufferSize),
-		send:    make(chan []byte),
+		send:    make(chan []byte, bufferSize),
 		join:    make(chan *Client),
 		leave:   make(chan *Client),
 		clients: make(map[*Client]bool),
@@ -147,8 +147,8 @@ func (r *Room) Run() {
 		select {
 		case cli := <-r.join:
 			r.cliMu.RLock()
-			r.clients[cli] = true
 			r.logger.Log("user joined")
+			r.clients[cli] = true
 			r.cliMu.RUnlock()
 		case cli := <-r.leave:
 			r.cliMu.RLock()
@@ -199,8 +199,7 @@ func (srv *ChatServer) Join(w http.ResponseWriter, r *http.Request) {
 	srv.roomsMu.RLock()
 	room, ok := srv.rooms[name]
 	if !ok {
-		//room = NewRoom(srv.rootCtx, &srv.wg, name, srv.bufferSize)
-		room = NewRoom(srv.rootCtx, &srv.wg, name)
+		room = NewRoom(srv.rootCtx, &srv.wg, name, srv.bufferSize)
 		room.logger = logger.New(OUT)
 
 		srv.rooms[name] = room

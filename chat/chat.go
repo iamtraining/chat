@@ -4,11 +4,13 @@ import (
 	"context"
 	"log"
 	"net/http"
+	"os"
 	"sync"
 	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
+	"github.com/iamtraining/chat/logger"
 )
 
 const (
@@ -16,11 +18,15 @@ const (
 	socketWriteBufferSize = 1024
 )
 
+var (
+	OUT = os.Stdout
+)
+
 type ChatServer struct {
-	rooms      map[string]*Room
-	roomsMu    sync.RWMutex
-	wg         sync.WaitGroup
-	bufferSize uint
+	rooms   map[string]*Room
+	roomsMu sync.RWMutex
+	wg      sync.WaitGroup
+	//bufferSize uint
 	rootCtx    context.Context
 	rootCancel context.CancelFunc
 	upgrader   websocket.Upgrader
@@ -28,7 +34,7 @@ type ChatServer struct {
 
 type Room struct {
 	name    string
-	send    chan *Message
+	send    chan []byte
 	join    chan *Client
 	leave   chan *Client
 	clients map[*Client]bool
@@ -37,12 +43,14 @@ type Room struct {
 	rwg     *sync.WaitGroup
 	ctx     context.Context
 	cancel  context.CancelFunc
+	logger  logger.Logger
 }
 
 type Client struct {
 	socket *websocket.Conn
-	send   chan *Message
-	room   *Room
+	//data   map[string]interface{}
+	send chan []byte
+	room *Room
 }
 
 type Message struct {
@@ -56,8 +64,8 @@ func NewChatServer(ctx context.Context, bufferSize uint) ChatServer {
 	ctx, cancel := context.WithCancel(ctx)
 
 	return ChatServer{
-		rooms:      make(map[string]*Room),
-		bufferSize: bufferSize,
+		rooms: make(map[string]*Room),
+		//bufferSize: bufferSize,
 		rootCtx:    ctx,
 		rootCancel: cancel,
 		upgrader: websocket.Upgrader{
@@ -88,11 +96,12 @@ func (c *Client) read() {
 	defer c.socket.Close()
 
 	for {
-		var msg Message
-		err := c.socket.ReadJSON(&msg)
+		_, msg, err := c.socket.ReadMessage()
 		if err != nil {
 			return
 		}
+
+		c.room.send <- msg
 	}
 
 }
@@ -101,26 +110,27 @@ func (c *Client) write() {
 	defer c.socket.Close()
 
 	for msg := range c.send {
-		err := c.socket.WriteJSON(msg)
+		err := c.socket.WriteMessage(websocket.TextMessage, msg)
 		if err != nil {
 			return
 		}
-		msg.Time = time.Now()
+		//msg.Time = time.Now()
 
-		c.room.send <- msg
+		//c.room.send <- msg
 	}
 
 }
 
-func NewRoom(ctx context.Context, srvwg *sync.WaitGroup, name string, bufferSize uint) *Room {
+func NewRoom(ctx context.Context, srvwg *sync.WaitGroup, name string /*, bufferSize uint*/) *Room {
 	ctx, cancel := context.WithCancel(ctx)
 
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
 
 	return &Room{
-		name:    name,
-		send:    make(chan *Message, bufferSize),
+		name: name,
+		//send:    make(chan *Message, bufferSize),
+		send:    make(chan []byte),
 		join:    make(chan *Client),
 		leave:   make(chan *Client),
 		clients: make(map[*Client]bool),
@@ -128,6 +138,7 @@ func NewRoom(ctx context.Context, srvwg *sync.WaitGroup, name string, bufferSize
 		rwg:     wg,
 		ctx:     ctx,
 		cancel:  cancel,
+		logger:  logger.Silent(),
 	}
 }
 
@@ -137,17 +148,20 @@ func (r *Room) Run() {
 		case cli := <-r.join:
 			r.cliMu.RLock()
 			r.clients[cli] = true
+			r.logger.Log("user joined")
 			r.cliMu.RUnlock()
 		case cli := <-r.leave:
 			r.cliMu.RLock()
 			delete(r.clients, cli)
 			close(cli.send)
+			r.logger.Log("user left the room")
 			r.cliMu.RUnlock()
 		case msg := <-r.send:
-			msg.Room = r.name
 			r.cliMu.RLock()
+			r.logger.Log("message received ", "[\"", string(msg), "\"]")
 			for cli := range r.clients {
 				cli.send <- msg
+				r.logger.Log("[was sent to user]")
 			}
 			r.cliMu.RUnlock()
 		case <-r.ctx.Done():
@@ -175,7 +189,7 @@ func (r *Room) Close(ctx context.Context) error {
 	}
 }
 
-func (srv *ChatServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (srv *ChatServer) Join(w http.ResponseWriter, r *http.Request) {
 	name, ok := mux.Vars(r)["room"]
 	if name == "" || !ok {
 		w.WriteHeader(http.StatusBadRequest)
@@ -185,7 +199,10 @@ func (srv *ChatServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	srv.roomsMu.RLock()
 	room, ok := srv.rooms[name]
 	if !ok {
-		room = NewRoom(srv.rootCtx, &srv.wg, name, srv.bufferSize)
+		//room = NewRoom(srv.rootCtx, &srv.wg, name, srv.bufferSize)
+		room = NewRoom(srv.rootCtx, &srv.wg, name)
+		room.logger = logger.New(OUT)
+
 		srv.rooms[name] = room
 
 		srv.wg.Add(1)
@@ -207,6 +224,7 @@ func (srv *ChatServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	room.cliMu.RLock()
+	//cli.data["Room"] = name
 	room.clients[cli] = true
 	room.cliMu.RUnlock()
 
@@ -221,7 +239,8 @@ func (srv *ChatServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func NewClient(socket *websocket.Conn, r *Room) *Client {
 	return &Client{
 		socket: socket,
-		room:   r,
-		send:   make(chan *Message, socketWriteBufferSize),
+		//data:   make(map[string]interface{}),
+		room: r,
+		send: make(chan []byte),
 	}
 }

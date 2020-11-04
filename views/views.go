@@ -11,23 +11,25 @@ import (
 
 type Template struct {
 	once     sync.Once
-	filename string
+	Filename string
 	tmpl     *template.Template
 }
 
 func (t *Template) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	t.once.Do(func() {
-		t.tmpl = template.Must(template.ParseFiles(filepath.Join("views", "templates", t.filename)))
+		t.tmpl = template.Must(template.ParseFiles(filepath.Join("views", "templates", t.Filename)))
 	})
 
 	data := map[string]interface{}{
 		"Host": r.Host,
 	}
 
-	name, ok := mux.Vars(r)["name"]
-	if name != "" || ok {
-		data["Name"] = name
+	room, ok := mux.Vars(r)["room"]
+	if room != "" || ok {
+		data["Room"] = room
 	}
+	//fmt.Println(room)
+	//fmt.Println(data)
 
 	t.tmpl.Execute(w, data)
 }

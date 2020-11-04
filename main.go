@@ -12,6 +12,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/iamtraining/chat/chat"
+	"github.com/iamtraining/chat/views"
 )
 
 func main() {
@@ -26,7 +27,8 @@ func main() {
 	}
 
 	chat := chat.NewChatServer(context.Background(), 100)
-	handler.HandleFunc("/chat/{room}", chat.ServeHTTP)
+	handler.Handle("/chat/{room}", &views.Template{Filename: "chat.gohtml"})
+	handler.HandleFunc("/join/{room}", chat.Join)
 
 	go func() {
 		if err := srv.ListenAndServe(); err != nil {
@@ -35,7 +37,7 @@ func main() {
 	}()
 
 	time.Sleep(100 * time.Millisecond)
-	log.Println("serrver started", addr)
+	log.Println("server started", *addr)
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)

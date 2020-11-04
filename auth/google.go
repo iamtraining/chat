@@ -47,6 +47,23 @@ func CallbackHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	creds, err := toStruct(data)
+	if err != nil {
+		log.Println(err.Error())
+		http.Redirect(w, r, "/login", http.StatusTemporaryRedirect)
+		return
+	}
+
+	email := base64.URLEncoding.EncodeToString([]byte(creds.email()))
+
+	cookie := &http.Cookie{
+		Name:  "credentials",
+		Value: email,
+		Path:  "/",
+	}
+
+	http.SetCookie(w, cookie)
+
 	fmt.Fprintf(w, "user info %s\n", data)
 }
 

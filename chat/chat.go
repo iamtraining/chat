@@ -10,6 +10,7 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
+	"github.com/iamtraining/chat/auth"
 	"github.com/iamtraining/chat/logger"
 )
 
@@ -34,7 +35,7 @@ type ChatServer struct {
 
 type Room struct {
 	name    string
-	send    chan []byte
+	send    chan *Message
 	join    chan *Client
 	leave   chan *Client
 	clients map[*Client]bool
@@ -48,16 +49,15 @@ type Room struct {
 
 type Client struct {
 	socket *websocket.Conn
-	//data   map[string]interface{}
-	send chan []byte
-	room *Room
+	data   string
+	send   chan *Message
+	room   *Room
 }
 
 type Message struct {
-	//Name string
-	Msg  string
-	Time time.Time
-	Room string
+	Name    string
+	Message string
+	Time    time.Time
 }
 
 func NewChatServer(ctx context.Context, bufferSize uint) ChatServer {
@@ -96,10 +96,14 @@ func (c *Client) read() {
 	defer c.socket.Close()
 
 	for {
-		_, msg, err := c.socket.ReadMessage()
+		var msg *Message
+		err := c.socket.ReadJSON(&msg)
 		if err != nil {
 			return
 		}
+
+		msg.Time = time.Now()
+		msg.Name = c.data
 
 		c.room.send <- msg
 	}
@@ -110,13 +114,10 @@ func (c *Client) write() {
 	defer c.socket.Close()
 
 	for msg := range c.send {
-		err := c.socket.WriteMessage(websocket.TextMessage, msg)
+		err := c.socket.WriteJSON(msg)
 		if err != nil {
-			return
+			break
 		}
-		//msg.Time = time.Now()
-
-		//c.room.send <- msg
 	}
 
 }
@@ -128,9 +129,8 @@ func NewRoom(ctx context.Context, srvwg *sync.WaitGroup, name string, bufferSize
 	wg.Add(1)
 
 	return &Room{
-		name: name,
-		//send:    make(chan *Message, bufferSize),
-		send:    make(chan []byte, bufferSize),
+		name:    name,
+		send:    make(chan *Message, bufferSize),
 		join:    make(chan *Client),
 		leave:   make(chan *Client),
 		clients: make(map[*Client]bool),
@@ -158,7 +158,7 @@ func (r *Room) Run() {
 			r.cliMu.RUnlock()
 		case msg := <-r.send:
 			r.cliMu.RLock()
-			r.logger.Log("message received ", "[\"", string(msg), "\"]")
+			r.logger.Log("message received ", "[\"", msg.Message, "\"]")
 			for cli := range r.clients {
 				cli.send <- msg
 				r.logger.Log("[was sent to user]")
@@ -216,15 +216,20 @@ func (srv *ChatServer) Join(w http.ResponseWriter, r *http.Request) {
 		log.Fatal("room", err)
 	}
 
-	cli := NewClient(socket, room)
+	cookie, err := r.Cookie("credentials")
+	if err != nil {
+		log.Fatal("getting credentials cookie failure", err.Error())
+		return
+	}
+
+	cli := NewClient(socket, room, auth.Decoder(cookie.Value))
 
 	defer func() {
 		room.leave <- cli
 	}()
 
 	room.cliMu.RLock()
-	//cli.data["Room"] = name
-	room.clients[cli] = true
+	room.join <- cli
 	room.cliMu.RUnlock()
 
 	room.rwg.Add(1)
@@ -235,11 +240,11 @@ func (srv *ChatServer) Join(w http.ResponseWriter, r *http.Request) {
 	cli.read()
 }
 
-func NewClient(socket *websocket.Conn, r *Room) *Client {
+func NewClient(socket *websocket.Conn, r *Room, email string) *Client {
 	return &Client{
 		socket: socket,
-		//data:   make(map[string]interface{}),
-		room: r,
-		send: make(chan []byte),
+		data:   email,
+		room:   r,
+		send:   make(chan *Message),
 	}
 }

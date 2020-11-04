@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/gorilla/mux"
+	"github.com/iamtraining/chat/auth"
 )
 
 type Template struct {
@@ -28,8 +29,10 @@ func (t *Template) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if room != "" || ok {
 		data["Room"] = room
 	}
-	//fmt.Println(room)
-	//fmt.Println(data)
+
+	if creds, err := r.Cookie("credentials"); err == nil {
+		data["Email"] = auth.Decoder(creds.Value)
+	}
 
 	t.tmpl.Execute(w, data)
 }

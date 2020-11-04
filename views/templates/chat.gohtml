@@ -9,6 +9,7 @@
 	<body>
 		<ul id="messages"></ul>
 		<form id="box">
+		{{.Email}}
 			<textarea></textarea>
 			<input type="submit" value="send" />
 		</form>
@@ -24,7 +25,7 @@
  							alert("socket connection does not exist");
  							return false;
  						}
- 						socket.send(msgBox.val());
+ 						socket.send(JSON.stringify({"Message": msgBox.val()}));
  						msgBox.val("");
  						return false;
  					});
@@ -36,8 +37,14 @@
  						alert("connection has been closed");
  					}
  						socket.onmessage = function(e) {
- 							messages.append($("<li>").text(e.data));
- 						}
+ 							var msg = JSON.parse(e.data);
+ 							messages.append(
+ 								$("<li>").append(
+ 								$("<strong>").text(msg.Name + ": "),
+ 								$("<span>").text(msg.Message)
+ 								)
+ 							);
+						}
  					}
  				});
  			</script>
